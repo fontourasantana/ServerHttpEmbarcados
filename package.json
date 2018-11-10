@@ -1,0 +1,17 @@
+{
+  "name": "servidor-http",
+  "version": "1.0.0",
+  "description": "Servidor para trabalho de embarcados",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "Mateus F.",
+  "license": "ISC",
+  "dependencies": {
+    "mysql2": "^1.6.4",
+    "nodemon": "^1.18.6",
+    "restify": "^7.2.2",
+    "sequelize": "^4.41.1"
+  }
+}
