@@ -1,6 +1,6 @@
 var models = require('../models');
 
-// GET: /api/check_in
+// POST: /api/check_in
 exports.checkIn = function (request, response, next) {
     models.user.findOne({
         where: {
@@ -15,21 +15,19 @@ exports.checkIn = function (request, response, next) {
             const user_id = data.get('user_id');
             const user_name = data.get('name');
             models.historic.build({ user_id: user_id, action: 'ENTRADA', date: new Date() }).save();
-            response.send({
-                name: user_name
-            });
+            response.send(user_name);
         }
     })
 
     return next();
 };
 
-// GET: /api/check_out
+// POST: /api/check_out
 exports.checkOut = function (request, response, next) {
    models.user.findOne({
         where: {
-            code: request.params['code'],
-            security_token: request.params['security_token']
+            code: request.body['code'],
+            security_token: request.body['security_token']
         }
     }).then(user => {
         if (user === null) 
