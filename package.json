@@ -9,6 +9,7 @@
   "author": "Mateus F.",
   "license": "ISC",
   "dependencies": {
+    "lodash": "^4.17.11",
     "mysql2": "^1.6.4",
     "nodemon": "^1.18.6",
     "restify": "^7.2.2",
