@@ -8,8 +8,6 @@ var relations = require('./models/relations')
 server.use(restify.plugins.bodyParser());
 server.post('/api/check_in/', routes.accessControl.checkIn);
 server.post('/api/check_out/', routes.accessControl.checkOut);
-// server.post('/api/todos', routes.todo.post);
-// server.del('/api/todos/:id', routes.todo.del);
 
 const seedUsers = function () {
     db.user.create({
