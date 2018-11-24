@@ -11,41 +11,23 @@
 ///
 #define CODE_CHECKIN 1
 #define CODE_CHECKOUT 0
+#define CODE_SYSTEM_ONLINE 1
+#define CODE_SYSTEM_OFFLINE 0
 #define SYSTEM_STATUS 0
 #define SYSTEM_USER_IN_USE 1
 
 // LCD
 LiquidCrystal lcd(12, 11, 4, 5, 6, 7);
 
-/////
+// CONFIGURAÇÕES PARA ESTABELECER CONEXÃO COM SERVIDOR
 byte MAC[] = {0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xED};
 EthernetClient client;
 IPAddress ip(10, 0, 0, 103);
 IPAddress gateway(10, 0, 0, 1);
 char server[] = "10.0.0.100";
-///
-//char CODE[3], TOKEN[40];
-
-// CIMA - FF629D
-// DIREITA - FFC23D
-// BAIXO - FFA857
-// ESQUERDA - FF22DD
-// OK - FF02FD
-// 1 - FF6897
-// 2 - FF9867
-// 3 - FFB04F
-// 4 - FF30CF
-// 5 - FF18E7
-// 6 - FF7A85
-// 7 - FF10EF
-// 8 - FF38C7
-// 9 - FF5AA5
-// 0 - FF4AB5
-// * - FF42BD
-// # - FF52AD
 
 // IR
-int CODE_NUMBER_ONE = 5, CODE_NUMBER_TWO = 6, CODE_NUMBER_THREE = 7, CODE_ASTERIK = 15;
+int CODE_NUMBER_ONE = 5, CODE_NUMBER_TWO = 6, CODE_NUMBER_THREE = 7, CODE_ASTERIK = 15, CODE_HASHTAG = 16;
 int MAPPED_CONTROL_CODES[17] = {
     0xFF629D, // CIMA
     0xFFC23D, // DIREITA
@@ -71,13 +53,22 @@ decode_results results;
 
 // CONFIGURAÇÕES
 String returnOfRequisition, USER_LOGGED_CODE, USER_LOGGED_TOKEN, TEMP_USER_CODE, TEMP_USER_TOKEN;
-bool requestConfirmed = false, brightnessConfiguration = false;
-int SYSTEM_INFORMATION[2] = {0, 0}, TEMP_CODE_READ = 0;
-int calibrationValue = 0, BRIGHTNESS_VALUE_REFFER = 0;
+String LIGHT_STATUS="OFF", AIR_STATUS="OFF";
+bool requestConfirmed = false, brightnessConfiguration = false, temperatureConfiguration = false;
+int SYSTEM_INFORMATION[2] = {0, 0}, TEMP_CODE_READ = 0, FLAG_CONTADOR = 0, MESSAGE_CODE;
+int calibrationValue = 0, BRIGHTNESS_REFERENCE_VALUE = 0, TEMPERATURE_REFERENCE_VALUE = 0;
 void setup()
 {
     Serial.begin(9600);
     lcd.begin(16, 2);
+    lcd.clear();
+    // Configuração do TIMER1
+    TCCR1A = 0;                //confira timer para operação normal
+    TCCR1B = 0;                //limpa registrador
+    TCNT1  = 0;                //zera temporizado
+                                     // 65536-(16MHz/1024/1Hz) = 49911 = 0xC2F7
+    OCR1A = 0x7A12;
+    TCCR1B |= (1 << WGM12) | (1 << CS12) | (1 << CS10);
     irrecv.enableIRIn();
     pinMode(LED_PIN, OUTPUT);
     pinMode(RECV_PIN, INPUT_PULLUP);
@@ -87,23 +78,48 @@ void setup()
     while (!Serial);
     if (Ethernet.begin(MAC) == 0)
     {
-        Serial.println("Falha ao configurar Ethernet usando o DHCP");
         Ethernet.begin(MAC, ip);
         lcd.clear();
         lcd.setCursor(0, 0);
         lcd.print("ERRO AO CONECTAR");
         lcd.setCursor(0, 1);
-        lcd.print("COM O SERVIDOR");
+        lcd.print("COM A REDE");
+    } else {
+        if (!client.connect(server, 8080)) {
+            lcd.clear();
+            lcd.setCursor(0, 0);
+            lcd.print("SERVIDOR OFFLINE");
+            lcd.setCursor(0, 1);
+            lcd.print("TENTE NOVAMENTE");
+        } else {
+            client.stop();
+            messageToLogin();
+        }
     }
-    else
-    {
-        Serial.println("SISTEMA INICIALIZADO COM SUCESSO !");
-        lcd.clear();
-        lcd.setCursor(0, 0);
-        lcd.print("ENTRE COM SUA");
-        lcd.setCursor(0, 1);
-        lcd.print("IDENTIFICACAO");
+}
+
+ISR(TIMER1_COMPA_vect)
+{
+    if(FLAG_CONTADOR++ == 2){
+        switch(MESSAGE_CODE){
+            case 1:
+                mainSystemMessageLoggedIn();
+            break;
+            case 2:
+                messageToLogin();
+            break;
+        }
+        TIMSK1 = 0x00;
     }
+}
+
+void messageToLogin()
+{
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("ENTRE COM SUA");
+    lcd.setCursor(0, 1);
+    lcd.print("IDENTIFICACAO");
 }
 
 void messageBootTheSystem()
@@ -116,16 +132,25 @@ void messageBootTheSystem()
     delay(2000);
 }
 
+void mainSystemMessageLoggedIn()
+{
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print(" SISTEMA ONLINE ");
+    lcd.setCursor(0, 1);
+    lcd.print(String("LUZ-"+ LIGHT_STATUS +" | AR-"+ AIR_STATUS));
+}
+
 void loadReferenceValues()
 {
-    BRIGHTNESS_VALUE_REFFER = EEPROM.read(0) * 4;
+    BRIGHTNESS_REFERENCE_VALUE = EEPROM.read(0) * 4;
+    TEMPERATURE_REFERENCE_VALUE = EEPROM.read(1) * 4;
 }
 
 void requestHttp(String CODE, String TOKEN, int METHOD_REQUEST)
 {
     if (METHOD_REQUEST == CODE_CHECKIN)
     {
-        Serial.println("Verificando Identificação");
         lcd.clear();
         lcd.setCursor(0, 0);
         lcd.print("VERIFICANDO");
@@ -134,7 +159,6 @@ void requestHttp(String CODE, String TOKEN, int METHOD_REQUEST)
     }
     else
     {
-        Serial.println("Registrando Saída");
         lcd.clear();
         lcd.setCursor(0, 0);
         lcd.print("REGISTRANDO");
@@ -160,7 +184,6 @@ void requestHttp(String CODE, String TOKEN, int METHOD_REQUEST)
     }
     else
     {
-        Serial.println("Erro na verificação da identificação");
         lcd.clear();
         lcd.setCursor(0, 0);
         lcd.print("OCORREU UM ERRO");
@@ -178,14 +201,32 @@ void saveBrightnessAccuracy()
     lcd.print("CALIBRACAO SALVA");
     lcd.setCursor(0, 1);
     lcd.print("COM SUCESSO");
-    BRIGHTNESS_VALUE_REFFER = EEPROM.read(0) * 4;
+    BRIGHTNESS_REFERENCE_VALUE = EEPROM.read(0) * 4;
+    FLAG_CONTADOR = 0;
+    MESSAGE_CODE = 1;
+    TIMSK1 = 0x02;
+}
+
+void saveTemperatureAccuracy()
+{
+    EEPROM.write(1, calibrationValue/4);
+    temperatureConfiguration = false;
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("CALIBRACAO SALVA");
+    lcd.setCursor(0, 1);
+    lcd.print("COM SUCESSO");
+    TEMPERATURE_REFERENCE_VALUE = EEPROM.read(1) * 4;
+    FLAG_CONTADOR = 0;
+    MESSAGE_CODE = 1;
+    TIMSK1 = 0x02;
 }
 
 void inputTreatmentIR()
 {
+    noInterrupts();
     if (irrecv.decode(&results))
     {
-        noInterrupts();
         unsigned int CODE_READ = (results.value);
         bool CODE_VALID = false;
         String CODE, TOKEN;
@@ -235,10 +276,42 @@ void inputTreatmentIR()
                 else
                     saveBrightnessAccuracy();
             }
+            if (CODE_READ == MAPPED_CONTROL_CODES[CODE_HASHTAG])
+            {
+                if(!temperatureConfiguration)
+                    temperatureConfiguration = true;
+                else
+                    saveTemperatureAccuracy();
+            }
         }
         irrecv.resume();
-        interrupts();
     }
+    interrupts();
+}
+
+void enableSystem()
+{
+    SYSTEM_INFORMATION[SYSTEM_STATUS] = CODE_SYSTEM_ONLINE;
+    SYSTEM_INFORMATION[SYSTEM_USER_IN_USE] = TEMP_CODE_READ;
+    USER_LOGGED_CODE = TEMP_USER_CODE;
+    USER_LOGGED_TOKEN = TEMP_USER_TOKEN;
+    FLAG_CONTADOR = 0;
+    MESSAGE_CODE = 1;
+    TIMSK1 = 0x02;
+}
+
+void disableSystem()
+{
+    SYSTEM_INFORMATION[SYSTEM_STATUS] = CODE_SYSTEM_OFFLINE;
+    SYSTEM_INFORMATION[SYSTEM_USER_IN_USE] = 0;
+    USER_LOGGED_CODE = "";
+    USER_LOGGED_TOKEN = "";
+    digitalWrite(LED_PIN, LOW);
+    LIGHT_STATUS="OFF";
+    AIR_STATUS="OFF";
+    FLAG_CONTADOR = 0;
+    MESSAGE_CODE = 2;
+    TIMSK1 = 0x02;
 }
 
 void loop()
@@ -262,10 +335,7 @@ void loop()
                     lcd.print("BEM VINDO");
                     lcd.setCursor(0, 1);
                     lcd.print(username);
-                    SYSTEM_INFORMATION[SYSTEM_STATUS] = 1;
-                    SYSTEM_INFORMATION[SYSTEM_USER_IN_USE] = TEMP_CODE_READ;
-                    USER_LOGGED_CODE = TEMP_USER_CODE;
-                    USER_LOGGED_TOKEN = TEMP_USER_TOKEN;
+                    enableSystem();
                 }
                 else
                 { // Retornou nada, entretanto como código 200 logo registrou a saída do professor
@@ -274,32 +344,39 @@ void loop()
                     lcd.print("SAIDA REGISTRADA");
                     lcd.setCursor(0, 1);
                     lcd.print("COM SUCESSO");
-                    Serial.println("Saída Registrada Com Sucesso");
-                    SYSTEM_INFORMATION[SYSTEM_STATUS] = 0;
-                    SYSTEM_INFORMATION[SYSTEM_USER_IN_USE] = 0;
-                    USER_LOGGED_CODE = "";
-                    USER_LOGGED_TOKEN = "";
+                    disableSystem();
                 }
             }
             returnOfRequisition = "";
             requestConfirmed = false;
         }
     }
-    if(brightnessConfiguration)
+    if(brightnessConfiguration || temperatureConfiguration)
     {
         calibrationValue = analogRead(POTENCIOMETER_PIN);
         lcd.clear();
         lcd.setCursor(0, 0);
         lcd.print(String("LEITURA: " + String(calibrationValue)));
         lcd.setCursor(0, 1);
-        lcd.print("* - PARA SALVAR");
-        delay(500);
+        if(brightnessConfiguration)
+            lcd.print("* - PARA SALVAR");
+        else if(temperatureConfiguration)
+            lcd.print("# - PARA SALVAR");
+        delay(250);
     }
-    if(!brightnessConfiguration && !requestConfirmed) {
+    if(SYSTEM_INFORMATION[SYSTEM_STATUS] == 1 && !brightnessConfiguration && !temperatureConfiguration && !requestConfirmed && !TIMSK1) {
         //float tensao = map(ldrValor, 0, 1023, 0, 5);
         int VALUE_READED = analogRead(LDR_PIN);
-        if (VALUE_READED >= BRIGHTNESS_VALUE_REFFER) digitalWrite(LED_PIN, HIGH); else digitalWrite(LED_PIN, LOW);
-        Serial.println(String(String(VALUE_READED) + " - " + String(BRIGHTNESS_VALUE_REFFER)));
+        if (VALUE_READED >= BRIGHTNESS_REFERENCE_VALUE && LIGHT_STATUS.equals("OFF")) {
+            digitalWrite(LED_PIN, HIGH);
+            LIGHT_STATUS = "ON";
+            mainSystemMessageLoggedIn();
+        } else if(VALUE_READED < BRIGHTNESS_REFERENCE_VALUE && LIGHT_STATUS.equals("ON")) {
+            digitalWrite(LED_PIN, LOW);
+            LIGHT_STATUS = "OFF";
+            mainSystemMessageLoggedIn();
+        }
+        Serial.println(String(String(VALUE_READED) + " - " + String(BRIGHTNESS_REFERENCE_VALUE) + " - " + String(TEMPERATURE_REFERENCE_VALUE)));
         delay(1000);
     }
 }
