@@ -6,6 +6,8 @@
 ///
 #define RECV_PIN 2
 #define LED_PIN 31
+#define LED_SYSTEM_ONLINE 29
+#define LED_SYSTEM_OFFLINE 28
 #define LDR_PIN 5
 #define POTENCIOMETER_PIN 4
 ///
@@ -15,6 +17,8 @@
 #define CODE_SYSTEM_OFFLINE 0
 #define SYSTEM_STATUS 0
 #define SYSTEM_USER_IN_USE 1
+#define BRIGHTNESS_ADDRESS 0
+#define TEMPERATURE_ADDRESS 1
 
 // LCD
 LiquidCrystal lcd(12, 11, 4, 5, 6, 7);
@@ -27,6 +31,8 @@ IPAddress gateway(10, 0, 0, 1);
 char server[] = "10.0.0.100";
 
 // IR
+IRrecv irrecv(RECV_PIN);
+decode_results results;
 int CODE_NUMBER_ONE = 5, CODE_NUMBER_TWO = 6, CODE_NUMBER_THREE = 7, CODE_ASTERIK = 15, CODE_HASHTAG = 16;
 int MAPPED_CONTROL_CODES[17] = {
     0xFF629D, // CIMA
@@ -48,34 +54,21 @@ int MAPPED_CONTROL_CODES[17] = {
     0xFF52AD  // #
 };
 
-IRrecv irrecv(RECV_PIN);
-decode_results results;
-
-// CONFIGURAÇÕES
-String returnOfRequisition, USER_LOGGED_CODE, USER_LOGGED_TOKEN, TEMP_USER_CODE, TEMP_USER_TOKEN;
+// CONFIGURAÇÕES/VARIAVEIS GLOBAIS
+String RETURN_OF_REQUISITION, USER_LOGGED_CODE, USER_LOGGED_TOKEN, TEMP_USER_CODE, TEMP_USER_TOKEN;
 String LIGHT_STATUS="OFF", AIR_STATUS="OFF";
-bool requestConfirmed = false, brightnessConfiguration = false, temperatureConfiguration = false;
-int SYSTEM_INFORMATION[2] = {0, 0}, TEMP_CODE_READ = 0, FLAG_CONTADOR = 0, MESSAGE_CODE;
+bool PROCESS_REQUISITION = false, BRIGHTNESS_CONFIGURATION_MODE = false, TEMPERATURE_CONFIGURATION_MODE = false;
+int SYSTEM_INFORMATION[2] = {0, 0}, TEMP_CODE_READ = 0, TIMER_COUNT = 0, MESSAGE_CODE;
 int calibrationValue = 0, BRIGHTNESS_REFERENCE_VALUE = 0, TEMPERATURE_REFERENCE_VALUE = 0;
 void setup()
 {
     Serial.begin(9600);
-    lcd.begin(16, 2);
-    lcd.clear();
-    // Configuração do TIMER1
-    TCCR1A = 0;                //confira timer para operação normal
-    TCCR1B = 0;                //limpa registrador
-    TCNT1  = 0;                //zera temporizado
-                                     // 65536-(16MHz/1024/1Hz) = 49911 = 0xC2F7
-    OCR1A = 0x7A12;
-    TCCR1B |= (1 << WGM12) | (1 << CS12) | (1 << CS10);
-    irrecv.enableIRIn();
-    pinMode(LED_PIN, OUTPUT);
-    pinMode(RECV_PIN, INPUT_PULLUP);
-    attachInterrupt(digitalPinToInterrupt(RECV_PIN), inputTreatmentIR, RISING);
-    messageBootTheSystem();
+    loadLCDSettings();
+    loadIRSettings();
+    loadTimerSettings();
+    loadPinSettings();
     loadReferenceValues();
-    while (!Serial);
+    messageBootTheSystem();
     if (Ethernet.begin(MAC) == 0)
     {
         Ethernet.begin(MAC, ip);
@@ -93,14 +86,44 @@ void setup()
             lcd.print("TENTE NOVAMENTE");
         } else {
             client.stop();
+            digitalWrite(LED_SYSTEM_OFFLINE, HIGH);
             messageToLogin();
         }
     }
 }
 
+void loadLCDSettings()
+{
+    lcd.begin(16, 2);
+    lcd.clear();
+}
+
+void loadIRSettings()
+{
+    irrecv.enableIRIn();
+    attachInterrupt(digitalPinToInterrupt(RECV_PIN), inputTreatmentIR, RISING);
+}
+
+void loadTimerSettings()
+{
+    TCCR1A = 0;                // confira timer para operação normal
+    TCCR1B = 0;                // limpa registrador
+    TCNT1  = 0;                // zera temporizado
+    OCR1A = 0x7A12;            // carrega registrador de comparação: 16MHz/1024/2Hz = 31250 = 0x7A12
+    TCCR1B |= (1 << WGM12) | (1 << CS12) | (1 << CS10);
+}
+
+void loadPinSettings()
+{
+    pinMode(LED_PIN, OUTPUT);
+    pinMode(LED_SYSTEM_OFFLINE, OUTPUT);
+    pinMode(LED_SYSTEM_ONLINE, OUTPUT);
+    pinMode(RECV_PIN, INPUT_PULLUP);
+}
+
 ISR(TIMER1_COMPA_vect)
 {
-    if(FLAG_CONTADOR++ == 2){
+    if(TIMER_COUNT++ == 2){
         switch(MESSAGE_CODE){
             case 1:
                 mainSystemMessageLoggedIn();
@@ -109,8 +132,8 @@ ISR(TIMER1_COMPA_vect)
                 messageToLogin();
             break;
         }
-        TIMSK1 = 0x00;
     }
+    if(TIMER_COUNT > 2) TIMSK1 = 0x00;
 }
 
 void messageToLogin()
@@ -143,8 +166,8 @@ void mainSystemMessageLoggedIn()
 
 void loadReferenceValues()
 {
-    BRIGHTNESS_REFERENCE_VALUE = EEPROM.read(0) * 4;
-    TEMPERATURE_REFERENCE_VALUE = EEPROM.read(1) * 4;
+    BRIGHTNESS_REFERENCE_VALUE = EEPROM.read(BRIGHTNESS_ADDRESS) * 4;
+    TEMPERATURE_REFERENCE_VALUE = EEPROM.read(TEMPERATURE_ADDRESS) * 4;
 }
 
 void requestHttp(String CODE, String TOKEN, int METHOD_REQUEST)
@@ -180,10 +203,8 @@ void requestHttp(String CODE, String TOKEN, int METHOD_REQUEST)
         client.println(postData.length());
         client.println();
         client.println(postData);
-        requestConfirmed = true;
-    }
-    else
-    {
+        PROCESS_REQUISITION = true;
+    } else {
         lcd.clear();
         lcd.setCursor(0, 0);
         lcd.print("OCORREU UM ERRO");
@@ -194,32 +215,28 @@ void requestHttp(String CODE, String TOKEN, int METHOD_REQUEST)
 
 void saveBrightnessAccuracy()
 {
-    EEPROM.write(0, calibrationValue/4);
-    brightnessConfiguration = false;
+    EEPROM.write(BRIGHTNESS_ADDRESS, calibrationValue/4);
+    BRIGHTNESS_CONFIGURATION_MODE = false;
     lcd.clear();
     lcd.setCursor(0, 0);
     lcd.print("CALIBRACAO SALVA");
     lcd.setCursor(0, 1);
     lcd.print("COM SUCESSO");
-    BRIGHTNESS_REFERENCE_VALUE = EEPROM.read(0) * 4;
-    FLAG_CONTADOR = 0;
-    MESSAGE_CODE = 1;
-    TIMSK1 = 0x02;
+    BRIGHTNESS_REFERENCE_VALUE = EEPROM.read(BRIGHTNESS_ADDRESS) * 4;
+    prepareTimerToDisplayMessage(1);
 }
 
 void saveTemperatureAccuracy()
 {
-    EEPROM.write(1, calibrationValue/4);
-    temperatureConfiguration = false;
+    EEPROM.write(TEMPERATURE_ADDRESS, calibrationValue/4);
+    TEMPERATURE_CONFIGURATION_MODE = false;
     lcd.clear();
     lcd.setCursor(0, 0);
     lcd.print("CALIBRACAO SALVA");
     lcd.setCursor(0, 1);
     lcd.print("COM SUCESSO");
-    TEMPERATURE_REFERENCE_VALUE = EEPROM.read(1) * 4;
-    FLAG_CONTADOR = 0;
-    MESSAGE_CODE = 1;
-    TIMSK1 = 0x02;
+    TEMPERATURE_REFERENCE_VALUE = EEPROM.read(TEMPERATURE_ADDRESS) * 4;
+    prepareTimerToDisplayMessage(1);
 }
 
 void inputTreatmentIR()
@@ -230,8 +247,8 @@ void inputTreatmentIR()
         unsigned int CODE_READ = (results.value);
         bool CODE_VALID = false;
         String CODE, TOKEN;
-        Serial.println(CODE_READ, HEX);
-        if (SYSTEM_INFORMATION[SYSTEM_STATUS] == 0)
+        //Serial.println(CODE_READ, HEX);
+        if (SYSTEM_INFORMATION[SYSTEM_STATUS] == CODE_SYSTEM_OFFLINE)
         {
             if (CODE_READ == MAPPED_CONTROL_CODES[CODE_NUMBER_ONE])
             {
@@ -259,10 +276,10 @@ void inputTreatmentIR()
                 requestHttp(CODE, TOKEN, CODE_CHECKIN);
             }
         }
-        else if (SYSTEM_INFORMATION[SYSTEM_STATUS] == 1)
+        else if (SYSTEM_INFORMATION[SYSTEM_STATUS] == CODE_SYSTEM_ONLINE)
         {
-            Serial.print("Sistema em uso: ");
-            Serial.println(String(USER_LOGGED_CODE + " - " + USER_LOGGED_TOKEN));
+            //Serial.print("Sistema em uso: ");
+            //Serial.println(String(USER_LOGGED_CODE + " - " + USER_LOGGED_TOKEN));
             if (CODE_READ == SYSTEM_INFORMATION[SYSTEM_USER_IN_USE])
             {
                 CODE = USER_LOGGED_CODE;
@@ -271,15 +288,15 @@ void inputTreatmentIR()
             }
             if (CODE_READ == MAPPED_CONTROL_CODES[CODE_ASTERIK])
             {
-                if(!brightnessConfiguration)
-                    brightnessConfiguration = true;
+                if(!BRIGHTNESS_CONFIGURATION_MODE)
+                    BRIGHTNESS_CONFIGURATION_MODE = true;
                 else
                     saveBrightnessAccuracy();
             }
             if (CODE_READ == MAPPED_CONTROL_CODES[CODE_HASHTAG])
             {
-                if(!temperatureConfiguration)
-                    temperatureConfiguration = true;
+                if(!TEMPERATURE_CONFIGURATION_MODE)
+                    TEMPERATURE_CONFIGURATION_MODE = true;
                 else
                     saveTemperatureAccuracy();
             }
@@ -295,9 +312,9 @@ void enableSystem()
     SYSTEM_INFORMATION[SYSTEM_USER_IN_USE] = TEMP_CODE_READ;
     USER_LOGGED_CODE = TEMP_USER_CODE;
     USER_LOGGED_TOKEN = TEMP_USER_TOKEN;
-    FLAG_CONTADOR = 0;
-    MESSAGE_CODE = 1;
-    TIMSK1 = 0x02;
+    digitalWrite(LED_SYSTEM_OFFLINE, LOW);
+    digitalWrite(LED_SYSTEM_ONLINE, HIGH);
+    prepareTimerToDisplayMessage(1);
 }
 
 void disableSystem()
@@ -306,25 +323,32 @@ void disableSystem()
     SYSTEM_INFORMATION[SYSTEM_USER_IN_USE] = 0;
     USER_LOGGED_CODE = "";
     USER_LOGGED_TOKEN = "";
+    digitalWrite(LED_SYSTEM_OFFLINE, HIGH);
+    digitalWrite(LED_SYSTEM_ONLINE, LOW);
     digitalWrite(LED_PIN, LOW);
     LIGHT_STATUS="OFF";
     AIR_STATUS="OFF";
-    FLAG_CONTADOR = 0;
-    MESSAGE_CODE = 2;
+    prepareTimerToDisplayMessage(2);
+}
+
+void prepareTimerToDisplayMessage(int CODE_MESSAGE)
+{
+    TIMER_COUNT = 0;
+    MESSAGE_CODE = CODE_MESSAGE;
     TIMSK1 = 0x02;
 }
 
 void loop()
 {
-    if (requestConfirmed)
+    if (PROCESS_REQUISITION)
     {
         if (client.available())
-            returnOfRequisition.concat((char)client.read());
+            RETURN_OF_REQUISITION.concat((char)client.read());
         if (!client.connected())
         {
             client.stop();
-            long statusCode = getStatusCode(returnOfRequisition);
-            String username = getUsername(returnOfRequisition);
+            long statusCode = getStatusCode(RETURN_OF_REQUISITION);
+            String username = getUsername(RETURN_OF_REQUISITION);
             if (statusCode == 200)
             {
                 if (username.length() > 0)
@@ -347,24 +371,24 @@ void loop()
                     disableSystem();
                 }
             }
-            returnOfRequisition = "";
-            requestConfirmed = false;
+            RETURN_OF_REQUISITION = "";
+            PROCESS_REQUISITION = false;
         }
     }
-    if(brightnessConfiguration || temperatureConfiguration)
+    if(BRIGHTNESS_CONFIGURATION_MODE || TEMPERATURE_CONFIGURATION_MODE)
     {
         calibrationValue = analogRead(POTENCIOMETER_PIN);
         lcd.clear();
         lcd.setCursor(0, 0);
         lcd.print(String("LEITURA: " + String(calibrationValue)));
         lcd.setCursor(0, 1);
-        if(brightnessConfiguration)
+        if(BRIGHTNESS_CONFIGURATION_MODE)
             lcd.print("* - PARA SALVAR");
-        else if(temperatureConfiguration)
+        else if(TEMPERATURE_CONFIGURATION_MODE)
             lcd.print("# - PARA SALVAR");
         delay(250);
     }
-    if(SYSTEM_INFORMATION[SYSTEM_STATUS] == 1 && !brightnessConfiguration && !temperatureConfiguration && !requestConfirmed && !TIMSK1) {
+    if(SYSTEM_INFORMATION[SYSTEM_STATUS] == 1 && !BRIGHTNESS_CONFIGURATION_MODE && !TEMPERATURE_CONFIGURATION_MODE && !PROCESS_REQUISITION && !TIMSK1) {
         //float tensao = map(ldrValor, 0, 1023, 0, 5);
         int VALUE_READED = analogRead(LDR_PIN);
         if (VALUE_READED >= BRIGHTNESS_REFERENCE_VALUE && LIGHT_STATUS.equals("OFF")) {
