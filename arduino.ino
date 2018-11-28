@@ -5,12 +5,15 @@
 #include <EEPROM.h>
 ///
 #define RECV_PIN 2
-#define LED_PIN 31
+#define LAMP_PIN 31
+#define COOLER_PIN 33
 #define LED_SYSTEM_ONLINE 29
 #define LED_SYSTEM_OFFLINE 28
-#define LDR_PIN 5
-#define POTENCIOMETER_PIN 4
+#define LDR_PIN A5
+#define THERMOSTAT_PIN A4
+#define POTENCIOMETER_PIN A4
 ///
+#define CODE_SUCCESS 200
 #define CODE_CHECKIN 1
 #define CODE_CHECKOUT 0
 #define CODE_SYSTEM_ONLINE 1
@@ -33,8 +36,8 @@ char server[] = "10.0.0.100";
 // IR
 IRrecv irrecv(RECV_PIN);
 decode_results results;
-int CODE_NUMBER_ONE = 5, CODE_NUMBER_TWO = 6, CODE_NUMBER_THREE = 7, CODE_ASTERIK = 15, CODE_HASHTAG = 16;
-int MAPPED_CONTROL_CODES[17] = {
+const int CODE_NUMBER_ONE = 5, CODE_NUMBER_TWO = 6, CODE_NUMBER_THREE = 7, CODE_ASTERIK = 15, CODE_HASHTAG = 16;
+const int MAPPED_CONTROL_CODES[17] = {
     0xFF629D, // CIMA
     0xFFC23D, // DIREITA
     0xFFA857, // BAIXO
@@ -63,10 +66,11 @@ int calibrationValue = 0, BRIGHTNESS_REFERENCE_VALUE = 0, TEMPERATURE_REFERENCE_
 void setup()
 {
     Serial.begin(9600);
+    loadPinSettings();
+    loadRelaySettings();
     loadLCDSettings();
     loadIRSettings();
     loadTimerSettings();
-    loadPinSettings();
     loadReferenceValues();
     messageBootTheSystem();
     if (Ethernet.begin(MAC) == 0)
@@ -92,6 +96,12 @@ void setup()
     }
 }
 
+void loadRelaySettings()
+{
+    digitalWrite(LAMP_PIN, HIGH);
+    digitalWrite(COOLER_PIN, HIGH);
+}
+
 void loadLCDSettings()
 {
     lcd.begin(16, 2);
@@ -115,7 +125,8 @@ void loadTimerSettings()
 
 void loadPinSettings()
 {
-    pinMode(LED_PIN, OUTPUT);
+    pinMode(LAMP_PIN, OUTPUT);
+    pinMode(COOLER_PIN, OUTPUT);
     pinMode(LED_SYSTEM_OFFLINE, OUTPUT);
     pinMode(LED_SYSTEM_ONLINE, OUTPUT);
     pinMode(RECV_PIN, INPUT_PULLUP);
@@ -247,22 +258,21 @@ void inputTreatmentIR()
         unsigned int CODE_READ = (results.value);
         bool CODE_VALID = false;
         String CODE, TOKEN;
-        //Serial.println(CODE_READ, HEX);
         if (SYSTEM_INFORMATION[SYSTEM_STATUS] == CODE_SYSTEM_OFFLINE)
         {
-            if (CODE_READ == MAPPED_CONTROL_CODES[CODE_NUMBER_ONE])
+            if(CODE_READ == MAPPED_CONTROL_CODES[CODE_NUMBER_ONE])
             {
                 CODE = "123";
                 TOKEN = "918237m12387da6sd876xcz765123*!SDSxasd1";
                 CODE_VALID = true;
-            }
-            if (CODE_READ == MAPPED_CONTROL_CODES[CODE_NUMBER_TWO])
+            } else
+            if(CODE_READ == MAPPED_CONTROL_CODES[CODE_NUMBER_TWO])
             {
                 CODE = "456";
                 TOKEN = "918237m12387da6sd876xcz765123*!SDSxasd2";
                 CODE_VALID = true;
-            }
-            if (CODE_READ == MAPPED_CONTROL_CODES[CODE_NUMBER_THREE])
+            } else
+            if(CODE_READ == MAPPED_CONTROL_CODES[CODE_NUMBER_THREE])
             {
                 CODE = "789";
                 TOKEN = "918237m12387da6sd876xcz765123*!SDSxasd3";
@@ -280,20 +290,20 @@ void inputTreatmentIR()
         {
             //Serial.print("Sistema em uso: ");
             //Serial.println(String(USER_LOGGED_CODE + " - " + USER_LOGGED_TOKEN));
-            if (CODE_READ == SYSTEM_INFORMATION[SYSTEM_USER_IN_USE])
+            if(CODE_READ == SYSTEM_INFORMATION[SYSTEM_USER_IN_USE])
             {
                 CODE = USER_LOGGED_CODE;
                 TOKEN = USER_LOGGED_TOKEN;
                 requestHttp(CODE, TOKEN, CODE_CHECKOUT);
-            }
-            if (CODE_READ == MAPPED_CONTROL_CODES[CODE_ASTERIK])
+            } else
+            if(CODE_READ == MAPPED_CONTROL_CODES[CODE_ASTERIK])
             {
                 if(!BRIGHTNESS_CONFIGURATION_MODE)
                     BRIGHTNESS_CONFIGURATION_MODE = true;
                 else
                     saveBrightnessAccuracy();
-            }
-            if (CODE_READ == MAPPED_CONTROL_CODES[CODE_HASHTAG])
+            } else
+            if(CODE_READ == MAPPED_CONTROL_CODES[CODE_HASHTAG])
             {
                 if(!TEMPERATURE_CONFIGURATION_MODE)
                     TEMPERATURE_CONFIGURATION_MODE = true;
@@ -325,7 +335,8 @@ void disableSystem()
     USER_LOGGED_TOKEN = "";
     digitalWrite(LED_SYSTEM_OFFLINE, HIGH);
     digitalWrite(LED_SYSTEM_ONLINE, LOW);
-    digitalWrite(LED_PIN, LOW);
+    digitalWrite(LAMP_PIN, HIGH);
+    digitalWrite(COOLER_PIN, HIGH);
     LIGHT_STATUS="OFF";
     AIR_STATUS="OFF";
     prepareTimerToDisplayMessage(2);
@@ -349,7 +360,7 @@ void loop()
             client.stop();
             long statusCode = getStatusCode(RETURN_OF_REQUISITION);
             String username = getUsername(RETURN_OF_REQUISITION);
-            if (statusCode == 200)
+            if (statusCode == CODE_SUCCESS)
             {
                 if (username.length() > 0)
                 { // Retornou nome do professor
@@ -388,19 +399,30 @@ void loop()
             lcd.print("# - PARA SALVAR");
         delay(250);
     }
-    if(SYSTEM_INFORMATION[SYSTEM_STATUS] == 1 && !BRIGHTNESS_CONFIGURATION_MODE && !TEMPERATURE_CONFIGURATION_MODE && !PROCESS_REQUISITION && !TIMSK1) {
+    if(SYSTEM_INFORMATION[SYSTEM_STATUS] == CODE_SYSTEM_ONLINE && !BRIGHTNESS_CONFIGURATION_MODE && !TEMPERATURE_CONFIGURATION_MODE && !PROCESS_REQUISITION && !TIMSK1) {
         //float tensao = map(ldrValor, 0, 1023, 0, 5);
-        int VALUE_READED = analogRead(LDR_PIN);
-        if (VALUE_READED >= BRIGHTNESS_REFERENCE_VALUE && LIGHT_STATUS.equals("OFF")) {
-            digitalWrite(LED_PIN, HIGH);
+        short int VALUE_READ_IN_LDR = analogRead(LDR_PIN);
+        short int VALUE_READ_IN_THERMOSTAT = analogRead(THERMOSTAT_PIN);
+        if (VALUE_READ_IN_LDR >= BRIGHTNESS_REFERENCE_VALUE && LIGHT_STATUS.equals("OFF")) {
+            digitalWrite(LAMP_PIN, LOW);
             LIGHT_STATUS = "ON";
             mainSystemMessageLoggedIn();
-        } else if(VALUE_READED < BRIGHTNESS_REFERENCE_VALUE && LIGHT_STATUS.equals("ON")) {
-            digitalWrite(LED_PIN, LOW);
+        } else if(VALUE_READ_IN_LDR < BRIGHTNESS_REFERENCE_VALUE && LIGHT_STATUS.equals("ON")) {
+            digitalWrite(LAMP_PIN, HIGH);
             LIGHT_STATUS = "OFF";
             mainSystemMessageLoggedIn();
         }
-        Serial.println(String(String(VALUE_READED) + " - " + String(BRIGHTNESS_REFERENCE_VALUE) + " - " + String(TEMPERATURE_REFERENCE_VALUE)));
+
+        if (VALUE_READ_IN_THERMOSTAT >= TEMPERATURE_REFERENCE_VALUE && AIR_STATUS.equals("OFF")) {
+            digitalWrite(COOLER_PIN, LOW);
+            AIR_STATUS = "ON";
+            mainSystemMessageLoggedIn();
+        } else if(VALUE_READ_IN_THERMOSTAT < TEMPERATURE_REFERENCE_VALUE && AIR_STATUS.equals("ON")) {
+            digitalWrite(COOLER_PIN, HIGH);
+            AIR_STATUS = "OFF";
+            mainSystemMessageLoggedIn();
+        }
+        Serial.println(String("LDR: "+ String(VALUE_READ_IN_LDR) + ", THERMOSTAT: " + String(VALUE_READ_IN_THERMOSTAT) + ", BRIGHTNESS_REFERENCE: " + String(BRIGHTNESS_REFERENCE_VALUE) + ", TEMPERATURE_REFERENCE: " + String(TEMPERATURE_REFERENCE_VALUE)));
         delay(1000);
     }
 }
