@@ -9,7 +9,7 @@ module.exports = function (sequelize, DataTypes) {
             type: DataTypes.STRING,
             unique: true
         },
-        name: DataTypes.STRING,
+        name: DataTypes.STRING(16),
         security_token: {
             type: DataTypes.STRING,
             unique: true
